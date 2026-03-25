@@ -2,6 +2,7 @@
 #include "defs.h"
 #include "loader.h"
 #include "trap.h"
+#include "timer.h"
 #include "vm.h"
 
 struct proc pool[NPROC];
@@ -27,12 +28,12 @@ void proc_init(void)
 {
 	struct proc *p;
 	for (p = pool; p < &pool[NPROC]; p++) {
-		p->state = UNUSED;
-		p->kstack = (uint64)kstack[p - pool];
-		p->trapframe = (struct trapframe *)trapframe[p - pool];
-		/*
-		* LAB1: you may need to initialize your new fields of proc here
-		*/
+			p->state = UNUSED;
+			p->kstack = (uint64)kstack[p - pool];
+			p->trapframe = (struct trapframe *)trapframe[p - pool];
+			/*
+			* LAB1: you may need to initialize your new fields of proc here
+			*/
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = 0;
@@ -52,9 +53,9 @@ struct proc *allocproc(void)
 {
 	struct proc *p;
 	for (p = pool; p < &pool[NPROC]; p++) {
-		if (p->state == UNUSED) {
-			goto found;
-		}
+			if (p->state == UNUSED) {
+					goto found;
+			}
 	}
 	return 0;
 
@@ -69,6 +70,8 @@ found:
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+	p->first_time = 0;
+	memset(p->syscall_times, 0, sizeof(p->syscall_times));
 	return p;
 }
 
@@ -81,16 +84,19 @@ void scheduler(void)
 {
 	struct proc *p;
 	for (;;) {
-		for (p = pool; p < &pool[NPROC]; p++) {
-			if (p->state == RUNNABLE) {
-				/*
-				* LAB1: you may need to init proc start time here
-				*/
-				p->state = RUNNING;
-				current_proc = p;
-				swtch(&idle.context, &p->context);
+			for (p = pool; p < &pool[NPROC]; p++) {
+					if (p->state == RUNNABLE) {
+							/*
+							* LAB1: you may need to init proc start time here
+							*/
+							if (p->first_time == 0) {
+									p->first_time = get_cycle() / (CPU_FREQ / 1000);
+							}
+							p->state = RUNNING;
+							current_proc = p;
+							swtch(&idle.context, &p->context);
+					}
 			}
-		}
 	}
 }
 
@@ -105,7 +111,7 @@ void sched(void)
 {
 	struct proc *p = curr_proc();
 	if (p->state == RUNNING)
-		panic("sched running");
+			panic("sched running");
 	swtch(&p->context, &idle.context);
 }
 
