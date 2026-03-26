@@ -51,8 +51,9 @@ struct proc {
 */
 typedef enum {
 	UnInit = 0,
-	Running = 1,
-	Exited = 2,
+	Ready = 1,
+	Running = 2,
+	Exited = 3,
 } TaskStatus;
 
 typedef struct {
