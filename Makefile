@@ -22,7 +22,7 @@ OBJS = $(C_OBJS) $(AS_OBJS)
 HEADER_DEP = $(addsuffix .d, $(basename $(C_OBJS)))
 
 ifeq (,$(findstring link_app.o,$(OBJS)))
-	AS_OBJS += $(BUILDDIR)/$K/link_app.o
+# 	AS_OBJS += $(BUILDDIR)/$K/link_app.o
 endif
 
 -include $(HEADER_DEP)

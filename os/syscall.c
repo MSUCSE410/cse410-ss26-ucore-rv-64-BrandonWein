@@ -92,26 +92,29 @@ uint64 sys_wait(int pid, uint64 va)
 	return wait(pid, code);
 }
 
+// sys_spawn loads and starts a new process based on a user-provided program name.
+// It translates the user-space string, finds the program ID, allocates a new process,
+// loads the binary into that process, sets the parent relationship, and schedules it.
 uint64 sys_spawn(uint64 va)
 {
-	struct proc *p = curr_proc();
-	char name[200];
-	copyinstr(p->pagetable, name, va, 200);
+	struct proc *p = curr_proc();                // get the current process structure
+	char name[200];                              // buffer to store the program name from user space
+	copyinstr(p->pagetable, name, va, 200);      // copy program name string from the user's address space
 
-	int id = get_id_by_name(name);
-	if (id < 0)
-			return -1;
+	int id = get_id_by_name(name);               // look up the internal program ID by name
+	if (id < 0)                                  // if the name is invalid or not found
+		return -1;                                // return error code
 
-	struct proc *np = allocproc();
-	if (np == NULL)
-			return -1;
+	struct proc *np = allocproc();               // allocate a new process slot
+	if (np == NULL)                              // if allocation fails
+		return -1;                                // return error code
 
-	loader(id, np);
+	loader(id, np);                             // load the program image into the new process
 
-	np->parent = p;
-	add_task(np);
+	np->parent = p;                              // record the current process as the parent
+	add_task(np);                                // add the new process to the ready queue
 
-	return np->pid;
+	return np->pid;                              // return the new process ID to the caller
 }
 
 uint64 sys_set_priority(long long prio) // Define the syscall function to set the priority of the current process
