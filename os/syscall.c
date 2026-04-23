@@ -249,6 +249,9 @@ int sys_waittid(int tid)
 *				for both mutex and semaphore detect, you can also
 *				use this idea or just ignore it.
 */
+// deadlock_detect implements the Banker's algorithm to check for potential deadlocks.
+// It simulates resource allocation to determine if the current state is safe.
+// Returns 0 if safe, -1 if unsafe (potential deadlock).
 static int deadlock_detect(const int available[LOCK_POOL_SIZE], const int allocation[NTHREAD][LOCK_POOL_SIZE], const int request[NTHREAD][LOCK_POOL_SIZE])
 {
 	int work[LOCK_POOL_SIZE]; // temporary available resources for safety check
@@ -288,6 +291,9 @@ static int deadlock_detect(const int available[LOCK_POOL_SIZE], const int alloca
 	return 0; // safe state
 }
 
+// sys_mutex_create initializes a new mutex in the process's mutex pool.
+// It allocates the mutex with the specified blocking behavior and updates
+// deadlock detection state if enabled. Returns the mutex ID or -1 on failure.
 int sys_mutex_create(int blocking)
 {
 	struct mutex *m = mutex_create(blocking);
@@ -302,6 +308,9 @@ int sys_mutex_create(int blocking)
 	return mutex_id; // return new mutex id to caller
 }
 
+// sys_mutex_lock attempts to acquire the specified mutex.
+// If deadlock detection is enabled, it checks for potential deadlocks before locking.
+// Blocks until the mutex is available, then updates allocation state.
 int sys_mutex_lock(int mutex_id)
   {
 	if (mutex_id < 0 || mutex_id >= curr_proc()->next_mutex_id) {
@@ -329,6 +338,9 @@ int sys_mutex_lock(int mutex_id)
 	return 0;
   }
 
+// sys_mutex_unlock releases the specified mutex.
+// It updates the deadlock detection state to mark the mutex as available
+// and clears the current thread's allocation record.
 int sys_mutex_unlock(int mutex_id)
 {
 	if (mutex_id < 0 || mutex_id >= curr_proc()->next_mutex_id) {
@@ -346,6 +358,9 @@ int sys_mutex_unlock(int mutex_id)
 	return 0;
 }
 
+// sys_semaphore_create initializes a new semaphore with the given resource count.
+// It allocates the semaphore and sets up deadlock detection state if enabled.
+// Returns the semaphore ID or -1 on failure.
 int sys_semaphore_create(int res_count)
   {
 	struct semaphore *s = semaphore_create(res_count);
@@ -360,6 +375,9 @@ int sys_semaphore_create(int res_count)
 	return sem_id; // return new semaphore id to caller
   }
 
+// sys_semaphore_up increments the semaphore count (V operation).
+// It signals waiting threads and updates deadlock detection state
+// by releasing one unit of the semaphore resource.
 int sys_semaphore_up(int semaphore_id)
 {
 	if (semaphore_id < 0 ||
@@ -379,6 +397,9 @@ int sys_semaphore_up(int semaphore_id)
 	return 0;
 }
 
+// sys_semaphore_down decrements the semaphore count (P operation).
+// If deadlock detection is enabled, it checks for potential deadlocks before waiting.
+// Blocks until a resource is available, then updates allocation state.
 int sys_semaphore_down(int semaphore_id)
 {
 	if (semaphore_id < 0 ||
