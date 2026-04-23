@@ -5,6 +5,8 @@
 #include "vm.h"
 #include "queue.h"
 
+#define BIG_STRIDE 0x7FFFFFFF
+
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
 __attribute__((aligned(4096))) char trapframe[NPROC][TRAP_PAGE_SIZE];
@@ -89,6 +91,11 @@ found:
 	memset((void *)p->trapframe, 0, TRAP_PAGE_SIZE);
 	p->context.ra = (uint64)usertrapret;
 	p->context.sp = p->kstack + KSTACK_SIZE;
+	// Initialize the stride value to 0; stride scheduling accumulates this value to determine scheduling order
+	p->stride = 0;
+	// Set the default priority to 16; priority affects how much stride is added per scheduling tick
+	p->priority = 16;
+	// Return the allocated process to the caller for further initialization or use
 	return p;
 }
 
@@ -97,31 +104,53 @@ found:
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
-void scheduler()
+void scheduler() // Define the scheduler function; this is the core of the process scheduler that runs indefinitely
 {
+	// Declare a pointer to a process structure for iterating through the process pool
 	struct proc *p;
+	// Declare a pointer to hold the process selected for execution
+	struct proc *selected;
+	// Declare a variable to track the minimum stride value found during selection
+	uint64 min_stride;
+	// Start an infinite loop for continuous process scheduling
 	for (;;) {
-		/*int has_proc = 0;
+		// Reset the selected process to NULL at the beginning of each scheduling cycle
+		selected = NULL;
+		// Initialize min_stride to the maximum possible value to ensure the first runnable process is selected
+		min_stride = (uint64)-1;
+		// Find RUNNABLE process with smallest stride
+		// Begin looping through all processes in the pool to find runnable ones
 		for (p = pool; p < &pool[NPROC]; p++) {
+			// Check if the current process is in the RUNNABLE state
 			if (p->state == RUNNABLE) {
-				has_proc = 1;
-				tracef("swtich to proc %d", p - pool);
-				p->state = RUNNING;
-				current_proc = p;
-				swtch(&idle.context, &p->context);
+				// If no process has been selected yet or this process has a smaller stride
+				if (selected == NULL || p->stride < min_stride) {
+					// Select this process as the candidate
+					selected = p;
+					// Update the minimum stride to this process's stride
+					min_stride = p->stride;
+				}
 			}
 		}
-		if(has_proc == 0) {
-			panic("all app are over!\n");
-		}*/
-		p = fetch_task();
-		if (p == NULL) {
+		// After scanning, check if any runnable process was found
+		if (selected == NULL) {
+			// If no process is runnable, panic as the system should not reach this state
 			panic("all app are over!\n");
 		}
-		tracef("swtich to proc %d", p - pool);
-		p->state = RUNNING;
-		current_proc = p;
-		swtch(&idle.context, &p->context);
+		// Drain the FIFO queue (we no longer use it)
+		// Drain the task queue since it's no longer used in stride scheduling
+		while (pop_queue(&task_queue) >= 0) {}
+		// Advance the chosen process's stride by its pass value
+		// Update the selected process's stride by adding the pass value (BIG_STRIDE / priority) for fairness
+		selected->stride += BIG_STRIDE / selected->priority;
+		// Log the switch to the selected process for debugging
+		tracef("switch to proc %d", selected - pool);
+		// Change the selected process's state to RUNNING
+		selected->state = RUNNING;
+		// Set the global current process pointer to the selected process
+		current_proc = selected;
+		// Perform the context switch from the idle process to the selected process
+		swtch(&idle.context, &selected->context);
 	}
 }
 

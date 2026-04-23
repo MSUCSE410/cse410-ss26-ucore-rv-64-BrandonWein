@@ -94,15 +94,100 @@ uint64 sys_wait(int pid, uint64 va)
 
 uint64 sys_spawn(uint64 va)
 {
-	// TODO: your job is to complete the sys call
-	return -1;
+	struct proc *p = curr_proc();
+	char name[200];
+	copyinstr(p->pagetable, name, va, 200);
+
+	int id = get_id_by_name(name);
+	if (id < 0)
+			return -1;
+
+	struct proc *np = allocproc();
+	if (np == NULL)
+			return -1;
+
+	loader(id, np);
+
+	np->parent = p;
+	add_task(np);
+
+	return np->pid;
 }
 
-uint64 sys_set_priority(long long prio){
-    // TODO: your job is to complete the sys call
-    return -1;
+uint64 sys_set_priority(long long prio) // Define the syscall function to set the priority of the current process
+{
+	// Check if the provided priority is less than 2, which is considered invalid
+	if (prio < 2)
+		// Return -1 to indicate an error if priority is invalid
+		return -1;
+	// Set the priority of the current process to the provided value
+	curr_proc()->priority = (uint64)prio;
+	// Return the set priority value to confirm the operation
+	return prio;
+  }
+
+uint64 sys_mmap(uint64 start, uint64 len, int port, int flag, int fd)
+{
+	if (len == 0)
+			return 0;
+	if (len > (1ULL << 30))
+			return -1;
+	if (port & ~0x7)
+			return -1;
+	if (!(port & 0x7))
+			return -1;
+	if (start % PGSIZE != 0)
+			return -1;
+
+	struct proc *p = curr_proc();
+	uint64 end = PGROUNDUP(start + len);
+
+	for (uint64 a = start; a < end; a += PGSIZE) {
+			if (walkaddr(p->pagetable, a) != 0)
+					return -1;
+	}
+
+	int pte_flags = PTE_U;
+	if (port & 1) pte_flags |= PTE_R;
+	if (port & 2) pte_flags |= PTE_W;
+	if (port & 4) pte_flags |= PTE_X;
+
+	for (uint64 a = start; a < end; a += PGSIZE) {
+			void *pa = kalloc();
+			if (pa == 0) {
+					for (uint64 b = start; b < a; b += PGSIZE)
+							uvmunmap(p->pagetable, b, 1, 1);
+					return -1;
+			}
+			memset(pa, 0, PGSIZE);
+			if (mappages(p->pagetable, a, PGSIZE, (uint64)pa, pte_flags) != 0) {
+					kfree(pa);
+					for (uint64 b = start; b < a; b += PGSIZE)
+							uvmunmap(p->pagetable, b, 1, 1);
+					return -1;
+			}
+	}
+	return 0;
 }
 
+  uint64 sys_munmap(uint64 start, uint64 len)
+  {
+        if (len == 0)
+                return 0;
+        if (start % PGSIZE != 0)
+                return -1;
+
+        struct proc *p = curr_proc();
+        uint64 end = PGROUNDUP(start + len);
+
+        for (uint64 a = start; a < end; a += PGSIZE) {
+                if (walkaddr(p->pagetable, a) == 0)
+                        return -1;
+        }
+
+        uvmunmap(p->pagetable, start, (end - start) / PGSIZE, 1);
+        return 0;
+  }
 
 extern char trap_page[];
 
@@ -148,6 +233,18 @@ void syscall()
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;
+	case SYS_mmap:
+		ret = sys_mmap(args[0], args[1], args[2], args[3], args[4]);
+		break;
+	case SYS_munmap:
+		ret = sys_munmap(args[0], args[1]);
+		break;
+	// Handle the SYS_setpriority syscall case
+	case SYS_setpriority:
+	        // Call the sys_set_priority function with the first argument (priority value)
+	        ret = sys_set_priority(args[0]);
+	        // Break out of the switch statement after handling this case
+        break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);
