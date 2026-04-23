@@ -24,7 +24,7 @@ OBJS = $(C_OBJS) $(AS_OBJS)
 HEADER_DEP = $(addsuffix .d, $(basename $(C_OBJS)))
 
 ifeq (,$(findstring initproc.o,$(OBJS)))
-	AS_OBJS += $(BUILDDIR)/$K/initproc.o
+# 	AS_OBJS += $(BUILDDIR)/$K/initproc.o
 endif
 
 INIT_PROC ?= usershell

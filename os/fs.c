@@ -113,7 +113,9 @@ struct inode *ialloc(uint dev, short type)
 		dip = (struct dinode *)bp->data + inum % IPB;
 		if (dip->type == 0) { // a free inode
 			memset(dip, 0, sizeof(*dip));
-			dip->type = type;
+		dip->type = type;
+		// Initialize link count to 1 because this inode has one directory entry pointing to it
+		dip->nlink = 1;
 			bwrite(bp);
 			brelse(bp);
 			return iget(dev, inum);
@@ -136,6 +138,8 @@ void iupdate(struct inode *ip)
 	dip = (struct dinode *)bp->data + ip->inum % IPB;
 	dip->type = ip->type;
 	dip->size = ip->size;
+	// Copy the in-memory link count to the disk inode to persist changes in hard link references
+	dip->nlink = ip->nlink;
 	// LAB4: you may need to update link count here
 	memmove(dip->addrs, ip->addrs, sizeof(ip->addrs));
 	bwrite(bp);
@@ -189,6 +193,8 @@ void ivalid(struct inode *ip)
 		dip = (struct dinode *)bp->data + ip->inum % IPB;
 		ip->type = dip->type;
 		ip->size = dip->size;
+		// Copy the disk inode's link count to the in-memory inode for tracking hard link references
+		ip->nlink = dip->nlink;
 		// LAB4: You may need to get lint count here
 		memmove(ip->addrs, dip->addrs, sizeof(ip->addrs));
 		brelse(bp);
@@ -207,8 +213,8 @@ void ivalid(struct inode *ip)
 // case it has to free the inode.
 void iput(struct inode *ip)
 {
-	// LAB4: Unmark the condition and change link count variable name (nlink) if needed
-	if (ip->ref == 1 && ip->valid && 0 /*&& ip->nlink == 0*/) {
+	// Free the inode if reference count is 1 (last reference) AND it has no hard links remaining (nlink == 0)
+	if (ip->ref == 1 && ip->valid && ip->nlink == 0) {
 		// inode has no links and no other references: truncate and free.
 		itrunc(ip);
 		ip->type = 0;

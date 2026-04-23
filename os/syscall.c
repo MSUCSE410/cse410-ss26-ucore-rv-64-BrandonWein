@@ -144,14 +144,57 @@ uint64 sys_wait(int pid, uint64 va)
 
 uint64 sys_spawn(uint64 va)
 {
-	// TODO: your job is to complete the sys call
-	return -1;
+	// Get the current process structure
+	struct proc *p = curr_proc();
+	// Buffer to store the executable name copied from user space
+	char name[MAX_STR_LEN];
+	// Copy the executable name from user space into kernel space
+	copyinstr(p->pagetable, name, va, MAX_STR_LEN);
+
+	// Look up the inode for the executable file by name
+	struct inode *ip = namei(name);
+	// Return error if the file doesn't exist
+	if (ip == NULL)
+		return -1;
+
+	// Allocate a new process structure for the spawned process
+	struct proc *np = allocproc();
+	// Release the inode and return error if process allocation fails
+	if (np == NULL) {
+		iput(ip);
+		return -1;
+	}
+
+	// Initialize standard I/O streams (stdin, stdout, stderr) for the new process
+	init_stdio(np);
+	// Load the executable binary into the new process's memory space from disk
+	bin_loader(ip, np);
+	// Decrement reference count and free the inode (we no longer need it)
+	iput(ip);
+
+	// Set up argument vector: argv[0] is the program name, argv[1] is NULL terminator
+	char *argv[2];
+	argv[0] = name;
+	argv[1] = NULL;
+	// Push the argument vector onto the new process's stack and store return value in a0 register
+	np->trapframe->a0 = push_argv(np, argv);
+
+	// Set the current process as the parent of the new process
+	np->parent = p;
+	// Add the new process to the task queue so it can be scheduled
+	add_task(np);
+	// Return the process ID of the newly spawned process
+	return np->pid;
 }
 
 uint64 sys_set_priority(long long prio)
 {
-	// TODO: your job is to complete the sys call
-	return -1;
+	// Validate that the priority is at least 2 (minimum allowed priority for stride scheduling)
+	if (prio < 2)
+		// Return error if priority is too low
+		return -1;
+	// Return the valid priority value
+	return prio;
 }
 
 uint64 sys_openat(uint64 va, uint64 omode, uint64 _flags)
@@ -177,19 +220,148 @@ uint64 sys_close(int fd)
 	return 0;
 }
 
-int sys_fstat(int fd,uint64 stat){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_fstat(int fd, uint64 stat)
+{
+	// Validate that the file descriptor is within the valid range
+	if (fd < 0 || fd >= FD_BUFFER_SIZE)
+		// Return error if fd is out of bounds
+		return -1;
+	// Get the current process structure
+	struct proc *p = curr_proc();
+	// Get the file structure associated with this file descriptor
+	struct file *f = p->files[fd];
+	// Check if the file descriptor is valid and points to an inode (not console/pipe)
+	if (f == NULL || f->type != FD_INODE)
+		// Return error if fd is invalid or not an inode
+		return -1;
+
+	// Get the inode associated with this file
+	struct inode *ip = f->ip;
+	// Read the inode from disk into memory if not already cached
+	ivalid(ip);
+
+	// Local structure to hold file statistics matching Linux stat structure layout
+	struct {
+		uint64 dev;
+		uint64 ino;
+		uint32 mode;
+		uint32 nlink;
+		uint64 pad[7];
+	} st;
+
+	// Copy device number from inode to stat structure
+	st.dev = ip->dev;
+	// Copy inode number from inode to stat structure
+	st.ino = ip->inum;
+	// Set mode field: 0x040000 for directories, 0x100000 for regular files
+	st.mode = (ip->type == T_DIR) ? 0x040000 : 0x100000;
+	// Copy hard link count from inode to stat structure
+	st.nlink = ip->nlink;
+	// Zero out the padding fields for the user
+	memset(st.pad, 0, sizeof(st.pad));
+
+	// Copy the stat structure to user space memory
+	if (copyout(p->pagetable, stat, (char *)&st, sizeof(st)) < 0)
+		// Return error if the copyout to user space fails
+		return -1;
+	// Return success
+	return 0;
 }
 
-int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags)
+{
+	// Get the current process structure
+	struct proc *p = curr_proc();
+	// Buffers to store the paths copied from user space
+	char old[MAXPATH], new[MAXPATH];
+	// Copy the old file path from user space into kernel space
+	copyinstr(p->pagetable, old, oldpath, MAXPATH);
+	// Copy the new link path from user space into kernel space
+	copyinstr(p->pagetable, new, newpath, MAXPATH);
+
+	// Check if the old and new paths are the same (hard link to self is not allowed)
+	// "Link a file with the same name" → error
+	if (strncmp(old, new, MAXPATH) == 0)
+		// Return error if trying to create a hard link with the same name
+		return -1;
+
+	// Look up the inode for the file to be hard-linked
+	struct inode *ip = namei(old);
+	// Return error if the source file doesn't exist
+	if (ip == NULL)
+		return -1;
+
+	// Read the inode from disk into memory if not already cached
+	ivalid(ip);
+	// Increment the hard link count since we're adding another directory entry pointing to this inode
+	ip->nlink++;
+	// Write the updated inode (with new link count) back to disk
+	iupdate(ip);
+
+	// Get the root directory inode to add the new directory entry
+	struct inode *dp = root_dir();
+	// Create the hard link by adding a new directory entry pointing to the same inode number
+	if (dirlink(dp, new, ip->inum) < 0) {
+		// If dirlink fails, rollback: decrement the link count we just incremented
+		ip->nlink--;
+		// Write the rolled-back inode back to disk
+		iupdate(ip);
+		// Release references to both inodes
+		iput(dp);
+		iput(ip);
+		// Return error indicating the operation failed
+		return -1;
+	}
+	// Release reference to the directory inode
+	iput(dp);
+	// Release reference to the linked inode
+	iput(ip);
+	// Return success
+	return 0;
 }
 
-int sys_unlinkat(int dirfd, uint64 name, uint64 flags){
-	//TODO: your job is to complete the syscall
-	return -1;
+int sys_unlinkat(int dirfd, uint64 name, uint64 flags)
+{
+	// Get the current process structure
+	struct proc *p = curr_proc();
+	// Buffer to store the path copied from user space
+	char path[MAXPATH];
+	// Copy the file path from user space into kernel space
+	copyinstr(p->pagetable, path, name, MAXPATH);
+
+	// Get the root directory inode
+	struct inode *dp = root_dir();
+	// Variable to store the offset of the directory entry within the directory data
+	uint off;
+	// Look up the file to be unlinked and get its inode and the offset of its directory entry
+	struct inode *ip = dirlookup(dp, path, &off);
+	// Return error if the file to unlink doesn't exist
+	if (ip == NULL) {
+		iput(dp);
+		return -1;
+	}
+
+	// Create a zeroed-out directory entry structure to overwrite the existing entry
+	// Zero out the directory entry
+	struct dirent de;
+	memset(&de, 0, sizeof(de));
+	// Overwrite the directory entry at offset 'off' with the zeroed entry to remove the file name
+	if (writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
+		// Panic if writing to directory fails (critical error, can't continue)
+		panic("unlink: writei");
+	// Release reference to the directory inode
+	iput(dp);
+
+	// Read the inode from disk into memory if not already cached
+	ivalid(ip);
+	// Decrement the hard link count since we removed one directory entry pointing to this inode
+	ip->nlink--;
+	// Write the updated inode (with decremented link count) back to disk
+	iupdate(ip);
+	// Release reference to the inode; if nlink == 0, the inode will be freed and blocks truncated
+	iput(ip);  // will free the inode & blocks if nlink hit 0
+	// Return success
+	return 0;
 }
 
 extern char trap_page[];
@@ -239,14 +411,24 @@ void syscall()
 	case SYS_wait4:
 		ret = sys_wait(args[0], args[1]);
 		break;
+	// Handle the fstat syscall: get file statistics
 	case SYS_fstat:
+	    // Call sys_fstat with file descriptor and pointer to stat buffer
 	    ret = sys_fstat(args[0],args[1]);
+		// Break to prevent falling through to the next case
 		break;
+	// Handle the linkat syscall: create a hard link to a file
 	case SYS_linkat:
+	    // Call sys_linkat with old path, new path, and flags
 	    ret = sys_linkat(args[0],args[1],args[2],args[3],args[4]);
+		// Break to prevent falling through to the next case
 		break;
+	// Handle the unlinkat syscall: remove a hard link to a file
 	case SYS_unlinkat:
+	    // Call sys_unlinkat with directory fd, path, and flags
 	    ret = sys_unlinkat(args[0],args[1],args[2]);
+		// Break to prevent falling through to the next case (important for correctness!)
+		break;
 	case SYS_spawn:
 		ret = sys_spawn(args[0]);
 		break;

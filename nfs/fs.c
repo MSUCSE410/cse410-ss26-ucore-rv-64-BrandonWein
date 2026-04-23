@@ -204,6 +204,8 @@ uint ialloc(ushort type)
 	bzero(&din, sizeof(din));
 	din.type = xshort(type);
 	din.size = xint(0);
+	// Initialize link count to 1 for the initial inode baked into the filesystem image
+	din.nlink = xshort(1);
 	// LAB4: You may want to init link count here
 	winode(inum, &din);
 	return inum;
