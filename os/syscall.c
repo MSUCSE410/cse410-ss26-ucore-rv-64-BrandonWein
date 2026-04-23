@@ -219,7 +219,9 @@ uint64 sys_close(int fd)
 	p->files[fd] = 0;
 	return 0;
 }
-
+// sys_fstat retrieves file statistics for a given file descriptor.
+// It validates the fd, accesses the inode, and copies relevant metadata
+// (device, inode number, mode, link count) to a user-provided buffer.
 int sys_fstat(int fd, uint64 stat)
 {
 	// Validate that the file descriptor is within the valid range
@@ -268,6 +270,9 @@ int sys_fstat(int fd, uint64 stat)
 	return 0;
 }
 
+// sys_linkat creates a hard link to an existing file.
+// It copies the old path and new path from user space, looks up the source inode,
+// increments its link count, and adds a new directory entry pointing to the same inode.
 int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint64 flags)
 {
 	// Get the current process structure
@@ -320,6 +325,9 @@ int sys_linkat(int olddirfd, uint64 oldpath, int newdirfd, uint64 newpath, uint6
 	return 0;
 }
 
+// sys_unlinkat removes a directory entry (unlinks a file).
+// It copies the path from user space, looks up the inode, removes the directory entry,
+// decrements the link count, and frees the inode if no links remain.
 int sys_unlinkat(int dirfd, uint64 name, uint64 flags)
 {
 	// Get the current process structure
